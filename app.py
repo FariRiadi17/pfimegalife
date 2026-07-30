@@ -100,11 +100,35 @@ if not df.empty:
     st.plotly_chart(fig3, use_container_width=True)
 
     # LEADERBOARD SELLER
-    st.subheader("🏆 Top 15 Seller dengan Beban Kerja Tertinggi (Rawan Overload)")
-    top_sell = df_filt.groupby(['Seller_Name', 'JobTitle', 'Branch_Name']).size().reset_index(name='Total Leads')
-    top_sell = top_sell.sort_values(by='Total Leads', ascending=False).head(15)
+        # LEADERBOARD SELLER (Dengan Analisis Temporal / Rentang Tanggal)
+    st.subheader("🏆 Top 15 Seller: Beban Kerja & Kecepatan Distribusi Leads")
+    
+    # Agregasi: Hitung total, cari tanggal pertama dan terakhir dapat lead
+    top_sell = df_filt.groupby(['Seller_Name', 'JobTitle', 'Branch_Name']).agg(
+        Total_Leads=('Leads_ID', 'count'),
+        Lead_Pertama=('Creation_Date', 'min'),
+        Lead_Terakhir=('Creation_Date', 'max')
+    ).reset_index()
+    
+    # Format Tanggal (DD-MMM-YYYY) agar rapi dan mudah dibaca user bisnis
+    top_sell['Lead_Pertama'] = pd.to_datetime(top_sell['Lead_Pertama']).dt.strftime('%d-%b-%Y')
+    top_sell['Lead_Terakhir'] = pd.to_datetime(top_sell['Lead_Terakhir']).dt.strftime('%d-%b-%Y')
+    
+    # Urutkan dari yang terbanyak dan ambil Top 15
+    top_sell = top_sell.sort_values(by='Total_Leads', ascending=False).head(15)
+    
+    # Rename kolom agar bahasa Indonesia dan profesional saat presentasi
+    top_sell = top_sell.rename(columns={
+        'Seller_Name': 'Nama Seller',
+        'JobTitle': 'Jabatan',
+        'Branch_Name': 'Cabang',
+        'Total_Leads': 'Total Leads',
+        'Lead_Pertama': 'Tgl Lead Pertama',
+        'Lead_Terakhir': 'Tgl Lead Terakhir'
+    })
+    
     st.dataframe(top_sell, use_container_width=True, hide_index=True)
-
+    
     # --- 5. DYNAMIC BUSINESS INSIGHTS (THE KILLER FEATURE) ---
     
     # Logic Insight 1: Top 2 Seller
