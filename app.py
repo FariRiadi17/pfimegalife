@@ -22,9 +22,10 @@ def load_and_clean_data():
         # Formatting Tanggal
         leads['Creation_Date'] = pd.to_datetime(leads['Creation_Date'], errors='coerce')
         
-        # 🚨 DATA STANDARDIZATION: Menghilangkan anomali '.0' pada Branch Code 🚨
-        leads['Branch_Code'] = leads['Branch_Code'].astype(str).str.replace('.0', '', regex=False)
-        branch['Branch_Code'] = branch['Branch_Code'].astype(str).str.replace('.0', '', regex=False)
+        # 🚨 DATA STANDARDIZATION: Membersihkan Leads ID & Branch Code dari .0 dan Notasi Ilmiah 🚨
+        leads['Leads_ID'] = leads['Leads_ID'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        leads['Branch_Code'] = leads['Branch_Code'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        branch['Branch_Code'] = branch['Branch_Code'].astype(str).str.replace('.0', '', regex=False).str.strip()
         
         # 🚨 DATA STANDARDIZATION: Menyamakan format nama Seller (Trim & Uppercase) 🚨
         leads['Seller'] = leads['Seller'].astype(str).str.strip().str.upper()
@@ -36,7 +37,7 @@ def load_and_clean_data():
         
         return df
     except Exception as e:
-        st.error(f"Error membaca file: {e}. Pastikan file bernama 'data.xlsx'")
+        st.error(f"Error membaca file: {e}. Pastikan file bernama 'data.xlsx' dan memiliki 3 sheet yang sesuai.")
         return pd.DataFrame()
 
 df = load_and_clean_data()
@@ -99,8 +100,7 @@ if not df.empty:
     fig3 = px.line(daily, x='Creation_Date', y='Total', markers=True, title="Kapan Leads Paling Banyak Masuk?", line_shape='spline')
     st.plotly_chart(fig3, use_container_width=True)
 
-    # LEADERBOARD SELLER
-        # LEADERBOARD SELLER (Dengan Analisis Temporal / Rentang Tanggal)
+    # --- LEADERBOARD SELLER (Dengan Analisis Temporal / Rentang Tanggal) ---
     st.subheader("🏆 Top 15 Seller: Beban Kerja & Kecepatan Distribusi Leads")
     
     # Agregasi: Hitung total, cari tanggal pertama dan terakhir dapat lead
@@ -128,7 +128,7 @@ if not df.empty:
     })
     
     st.dataframe(top_sell, use_container_width=True, hide_index=True)
-    
+
     # --- 5. DYNAMIC BUSINESS INSIGHTS (THE KILLER FEATURE) ---
     
     # Logic Insight 1: Top 2 Seller
@@ -189,4 +189,4 @@ if not df.empty:
     """)
 
 else:
-    st.warning("Data tidak ditemukan atau file belum dimuat dengan benar.")
+    st.warning("⚠️ Data tidak ditemukan atau file belum dimuat dengan benar. Pastikan file bernama 'data.xlsx'.")
