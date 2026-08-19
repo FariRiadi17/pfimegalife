@@ -47,18 +47,36 @@ if not df.empty:
     st.title("📊 PFI Mega Life: Branch Performance Intelligence")
     st.markdown("Analisis Performa Branch, Distribusi Leads, & Workload Ratio | **Q4 2025 - Sekarang**")
 
-    # ====================================================================
-    # --- 2. FILTER TANGGAL (Q4 2025 - SEKARANG) ---
+        # ====================================================================
+    # --- 2. FILTER TANGGAL (Q4 2025 - SEKARANG) - FIXED ---
     # ====================================================================
     st.sidebar.header("📅 Rentang Periode Analisis")
-    min_date = df['Creation_Date'].min().date()
-    max_date = df['Creation_Date'].max().date()
     
-    # Default: Q4 2025 (1 Oct 2025) sampai hari ini
     import datetime
-    default_start = datetime.date(2025, 10, 1)
-    default_end = max_date if max_date else datetime.date.today()
     
+    # Ambil tanggal min dan max dari data (gunakan dropna agar aman dari error NaT)
+    valid_dates = df['Creation_Date'].dropna()
+    if not valid_dates.empty:
+        min_date = valid_dates.min().date()
+        max_date = valid_dates.max().date()
+    else:
+        # Fallback jika tidak ada tanggal valid
+        min_date = datetime.date.today()
+        max_date = datetime.date.today()
+
+    # Target default start adalah 1 Oktober 2025
+    target_start = datetime.date(2025, 10, 1)
+    
+    # 🚨 FIX: Pastikan default_start TIDAK LEBIH KECIL dari min_date data
+    # Jika data pertama kali muncul di November 2025, default_start otomatis geser ke November.
+    default_start = max(min_date, target_start)
+    default_end = max_date
+    
+    # Fallback jaga-jaga jika default_start > default_end (misal data kosong/sangat aneh)
+    if default_start > default_end:
+        default_start = min_date
+        default_end = max_date
+
     date_range = st.sidebar.date_input(
         "Pilih Periode:",
         value=(default_start, default_end),
@@ -69,7 +87,6 @@ if not df.empty:
     if len(date_range) == 2:
         start_date, end_date = date_range
         df = df[(df['Creation_Date'].dt.date >= start_date) & (df['Creation_Date'].dt.date <= end_date)]
-
     # ====================================================================
     # --- 3. CASCADING FILTERS (Region -> Area -> Branch) ---
     # ====================================================================
