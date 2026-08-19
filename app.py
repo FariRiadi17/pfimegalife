@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 # --- PENGATURAN HALAMAN ---
-st.set_page_config(page_title="PFI Mega Life Automation Dashboard", layout="wide", page_icon="📊")
+st.set_page_config(page_title="PFI Mega Life - Branch Performance Dashboard", layout="wide", page_icon="📊")
 
 # --- 1. FUNGSI LOAD & CLEAN DATA (ETL PIPELINE) ---
 @st.cache_data
@@ -13,180 +14,284 @@ def load_and_clean_data():
         leads = pd.read_excel('data.xlsx', sheet_name='Data Leads')
         seller = pd.read_excel('data.xlsx', sheet_name='Data Seller')
         branch = pd.read_excel('data.xlsx', sheet_name='Data Branch')
-        
-        # Rename Kolom berdasarkan urutan index (Menghindari error nama kolom sistem yang berantakan)
+
+        # Rename Kolom berdasarkan urutan index
         leads.columns = ['Leads_ID', 'Creation_Date', 'IS_Name', 'RH_Name', 'Branch_Code', 'Seller', 'Customer_Name', 'Jenis_Leads']
         seller.columns = ['NIP', 'JobTitle', 'Branch_Name_Seller', 'Area_Name_Seller', 'Regional_Name_Seller', 'Seller_Name']
         branch.columns = ['Branch_Code', 'Branch_Name', 'Area_Name', 'Regional_Name', 'BranchClass']
-        
+
         # Formatting Tanggal
         leads['Creation_Date'] = pd.to_datetime(leads['Creation_Date'], errors='coerce')
-        
-        # 🚨 DATA STANDARDIZATION: Membersihkan Leads ID & Branch Code dari .0 dan Notasi Ilmiah 🚨
+
+        # 🚨 DATA STANDARDIZATION 🚨
         leads['Leads_ID'] = leads['Leads_ID'].astype(str).str.replace('.0', '', regex=False).str.strip()
         leads['Branch_Code'] = leads['Branch_Code'].astype(str).str.replace('.0', '', regex=False).str.strip()
         branch['Branch_Code'] = branch['Branch_Code'].astype(str).str.replace('.0', '', regex=False).str.strip()
-        
-        # 🚨 DATA STANDARDIZATION: Menyamakan format nama Seller (Trim & Uppercase) 🚨
+
         leads['Seller'] = leads['Seller'].astype(str).str.strip().str.upper()
         seller['Seller_Name'] = seller['Seller_Name'].astype(str).str.strip().str.upper()
-        
-        # MERGE DATA (Star Schema Logic: Fact Table -> Dimension Tables)
+
+        # MERGE DATA
         df = pd.merge(leads, branch, on='Branch_Code', how='left', suffixes=('_leads', '_branch'))
         df = pd.merge(df, seller, left_on='Seller', right_on='Seller_Name', how='left')
         
-        return df
+        return df, branch
     except Exception as e:
         st.error(f"Error membaca file: {e}. Pastikan file bernama 'data.xlsx' dan memiliki 3 sheet yang sesuai.")
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
-df = load_and_clean_data()
+df, master_branch = load_and_clean_data()
 
 if not df.empty:
     # --- JUDUL DASHBOARD ---
-    st.title("📊 PFI Mega Life: Bancassurance Automation Dashboard")
-    st.markdown("**Analisis Distribusi Leads, Workload Ratio, & Lead-to-Role Alignment | Juli 2026**")
+    st.title("📊 PFI Mega Life: Branch Performance Intelligence")
+    st.markdown("Analisis Performa Branch, Distribusi Leads, & Workload Ratio | **Q4 2025 - Sekarang**")
 
-    # --- 2. SIDEBAR FILTERS (INTERACTIVE SLICERS) ---
-    st.sidebar.header("🔍 Filter Konteks Bisnis")
+    # ====================================================================
+    # --- 2. FILTER TANGGAL (Q4 2025 - SEKARANG) ---
+    # ====================================================================
+    st.sidebar.header("📅 Rentang Periode Analisis")
+    min_date = df['Creation_Date'].min().date()
+    max_date = df['Creation_Date'].max().date()
     
+    # Default: Q4 2025 (1 Oct 2025) sampai hari ini
+    import datetime
+    default_start = datetime.date(2025, 10, 1)
+    default_end = max_date if max_date else datetime.date.today()
+    
+    date_range = st.sidebar.date_input(
+        "Pilih Periode:",
+        value=(default_start, default_end),
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    if len(date_range) == 2:
+        start_date, end_date = date_range
+        df = df[(df['Creation_Date'].dt.date >= start_date) & (df['Creation_Date'].dt.date <= end_date)]
+
+    # ====================================================================
+    # --- 3. CASCADING FILTERS (Region -> Area -> Branch) ---
+    # ====================================================================
+    st.sidebar.header("🔍 Filter Hierarki Wilayah")
+    
+    # Level 1: Region
     regions = sorted(df['Regional_Name'].dropna().unique().tolist())
-    sel_region = st.sidebar.multiselect("Pilih Regional:", regions, default=regions)
+    sel_region = st.sidebar.multiselect("🏢 Pilih Regional:", regions, default=regions)
     
-    lead_types = sorted(df['Jenis_Leads'].dropna().unique().tolist())
-    sel_lead = st.sidebar.multiselect("Pilih Jenis Leads:", lead_types, default=lead_types)
+    # Level 2: Area (tergantung Region yang dipilih)
+    df_region = df[df['Regional_Name'].isin(sel_region)]
+    areas = sorted(df_region['Area_Name'].dropna().unique().tolist())
+    sel_area = st.sidebar.multiselect("📍 Pilih Area:", areas, default=areas)
     
-    job_titles = sorted(df['JobTitle'].dropna().unique().tolist())
-    sel_job = st.sidebar.multiselect("Pilih Jabatan Seller:", job_titles, default=job_titles)
+    # Level 3: Branch (tergantung Area yang dipilih)
+    df_area = df_region[df_region['Area_Name'].isin(sel_area)]
+    branches = sorted(df_area['Branch_Name'].dropna().unique().tolist())
+    sel_branch = st.sidebar.multiselect("🏬 Pilih Branch:", branches, default=branches)
+    
+    # Apply Filter Final
+    df_filt = df_area[df_area['Branch_Name'].isin(sel_branch)]
 
-    # Apply Filter ke Dataframe
-    df_filt = df[
-        (df['Regional_Name'].isin(sel_region)) & 
-        (df['Jenis_Leads'].isin(sel_lead)) & 
-        (df['JobTitle'].isin(sel_job))
-    ]
-
-    # --- 3. KPI CARDS (METRIK UTAMA) ---
-    c1, c2, c3 = st.columns(3)
+    # ====================================================================
+    # --- 4. KPI CARDS (METRIK UTAMA) ---
+    # ====================================================================
+    c1, c2, c3, c4 = st.columns(4)
     total_leads = len(df_filt)
     active_sellers = df_filt['Seller_Name'].nunique()
-    avg_wl = total_leads / max(1, active_sellers) # Mencegah divide by zero
+    total_branches = df_filt['Branch_Name'].nunique()
+    avg_wl = total_leads / max(1, active_sellers)
     
-    c1.metric("Total Leads Masuk", f"{total_leads:,}")
-    c2.metric("Total Seller Aktif", f"{active_sellers}")
-    c3.metric("Rasio Beban Kerja (Leads/Seller)", f"{avg_wl:.1f}")
+    c1.metric("📥 Total Leads Masuk", f"{total_leads:,}")
+    c2.metric("👤 Total Seller Aktif", f"{active_sellers}")
+    c3.metric("🏬 Branch Aktif", f"{total_branches}")
+    c4.metric("⚖️ Rasio Beban Kerja", f"{avg_wl:.1f} leads/seller")
+    
+    st.markdown("---")
+
+    # ====================================================================
+    # --- 5. CHART: TOTAL LEADS, SELLER AKTIF, RASIO BEBAN KERJA ---
+    # ====================================================================
+    st.subheader("📈 Tren Metrik Utama (Bulanan)")
+    
+    # Agregasi bulanan
+    df_filt_copy = df_filt.copy()
+    df_filt_copy['Month'] = df_filt_copy['Creation_Date'].dt.to_period('M')
+    
+    monthly_metrics = df_filt_copy.groupby('Month').agg(
+        Total_Leads=('Leads_ID', 'count'),
+        Active_Sellers=('Seller_Name', 'nunique')
+    ).reset_index()
+    monthly_metrics['Month'] = monthly_metrics['Month'].astype(str)
+    monthly_metrics['Workload_Ratio'] = monthly_metrics['Total_Leads'] / monthly_metrics['Active_Sellers'].replace(0, 1)
+    
+    col_chart1, col_chart2, col_chart3 = st.columns(3)
+    
+    with col_chart1:
+        fig_leads = px.bar(monthly_metrics, x='Month', y='Total_Leads', 
+                          title="Total Leads per Bulan",
+                          color_discrete_sequence=['#636EFA'])
+        st.plotly_chart(fig_leads, use_container_width=True)
+    
+    with col_chart2:
+        fig_sellers = px.line(monthly_metrics, x='Month', y='Active_Sellers', 
+                             title="Seller Aktif per Bulan",
+                             markers=True, color_discrete_sequence=['#EF553B'])
+        st.plotly_chart(fig_sellers, use_container_width=True)
+    
+    with col_chart3:
+        fig_ratio = px.bar(monthly_metrics, x='Month', y='Workload_Ratio', 
+                          title="Rasio Beban Kerja per Bulan",
+                          color_discrete_sequence=['#00CC96'])
+        st.plotly_chart(fig_ratio, use_container_width=True)
 
     st.markdown("---")
 
-    # --- 4. VISUALISASI DATA ---
+    # ====================================================================
+    # --- 6. ANALISIS PER BRANCH: TOP 10 SELLER & LEADS ---
+    # ====================================================================
+    st.header("🏆 Analisis Performa (Berdasarkan Filter)")
+    
+    tab1, tab2, tab3 = st.tabs(["👑 Top 10 Seller", "📊 Top 10 Branch by Leads", "⚠️ Branch Tanpa Leads"])
+    
+    with tab1:
+        st.subheader("Top 10 Seller dengan Leads Terbanyak")
+        top_sellers = df_filt.groupby(['Seller_Name', 'Branch_Name', 'JobTitle']).agg(
+            Total_Leads=('Leads_ID', 'count')
+        ).reset_index().sort_values('Total_Leads', ascending=False).head(10)
+        
+        fig_top_seller = px.bar(top_sellers, x='Seller_Name', y='Total_Leads',
+                               color='Branch_Name',
+                               title="Top 10 Seller Produktif",
+                               labels={'Seller_Name': 'Nama Seller', 'Total_Leads': 'Jumlah Leads'},
+                               text='Total_Leads')
+        fig_top_seller.update_traces(textposition='outside')
+        st.plotly_chart(fig_top_seller, use_container_width=True)
+        st.dataframe(top_sellers.rename(columns={
+            'Seller_Name': 'Nama Seller', 'Branch_Name': 'Cabang', 
+            'JobTitle': 'Jabatan', 'Total_Leads': 'Total Leads'
+        }), use_container_width=True, hide_index=True)
+    
+    with tab2:
+        st.subheader("Top 10 Branch dengan Leads Terbanyak")
+        top_branches = df_filt.groupby(['Branch_Name', 'Area_Name', 'Regional_Name']).agg(
+            Total_Leads=('Leads_ID', 'count'),
+            Active_Sellers=('Seller_Name', 'nunique')
+        ).reset_index()
+        top_branches['Workload_Ratio'] = (top_branches['Total_Leads'] / top_branches['Active_Sellers'].replace(0, 1)).round(1)
+        top_branches = top_branches.sort_values('Total_Leads', ascending=False).head(10)
+        
+        fig_top_branch = px.bar(top_branches, x='Branch_Name', y='Total_Leads',
+                               color='Area_Name',
+                               title="Top 10 Branch Penghasil Leads",
+                               labels={'Branch_Name': 'Cabang', 'Total_Leads': 'Jumlah Leads'},
+                               text='Total_Leads')
+        fig_top_branch.update_traces(textposition='outside')
+        st.plotly_chart(fig_top_branch, use_container_width=True)
+        st.dataframe(top_branches.rename(columns={
+            'Branch_Name': 'Cabang', 'Area_Name': 'Area', 'Regional_Name': 'Regional',
+            'Total_Leads': 'Total Leads', 'Active_Sellers': 'Seller Aktif',
+            'Workload_Ratio': 'Rasio Beban Kerja'
+        }), use_container_width=True, hide_index=True)
+    
+    with tab3:
+        st.subheader("⚠️ Branch yang Belum Menghasilkan Leads (Zero-Performance Branches)")
+        
+        # Cari branch yang ada di master data tapi tidak ada leads-nya di filter saat ini
+        active_branch_codes = df_filt['Branch_Code'].dropna().unique()
+        all_branches_in_filter = master_branch[
+            (master_branch['Regional_Name'].isin(sel_region)) &
+            (master_branch['Area_Name'].isin(sel_area)) &
+            (master_branch['Branch_Name'].isin(sel_branch))
+        ]
+        
+        zero_leads_branches = all_branches_in_filter[~all_branches_in_filter['Branch_Code'].isin(active_branch_codes)]
+        
+        if not zero_leads_branches.empty:
+            st.warning(f"⚠️ Ditemukan **{len(zero_leads_branches)} branch** yang belum menghasilkan leads sama sekali pada periode & filter yang dipilih.")
+            st.dataframe(zero_leads_branches.rename(columns={
+                'Branch_Code': 'Kode Cabang', 'Branch_Name': 'Nama Cabang',
+                'Area_Name': 'Area', 'Regional_Name': 'Regional', 'BranchClass': 'Kelas Cabang'
+            }), use_container_width=True, hide_index=True)
+            
+            # Evaluasi & Rekomendasi
+            st.markdown("### 💡 Evaluasi & Rekomendasi Strategis untuk Zero-Performance Branches:")
+            
+            # Analisis kelas cabang yang tidak menghasilkan leads
+            class_dist = zero_leads_branches['BranchClass'].value_counts()
+            top_class = class_dist.index[0] if not class_dist.empty else "Berbagai Kelas"
+            
+            st.error(f"""
+            **🔍 Root Cause Analysis:**
+            1. **Dominansi Kelas Cabang:** Mayoritas branch tanpa leads adalah kelas **{top_class}**. Ini mengindikasikan bahwa cabang dengan kelas ini mungkin memiliki keterbatasan SDM atau akses ke database nasabah.
+            
+            **🎯 Action Plan (Evaluasi):**
+            2. **Audit Ketersediaan Seller:** Pastikan branch-branch ini memiliki seller aktif (RFRM/MFRM) yang memang bertugas. Jika tidak ada seller, leads tidak akan pernah tercipta.
+            3. **Cek Distribusi Leads Manual:** Apakah branch ini dilewati dalam sistem auto-routing? Jika ya, sistem perlu di-rekonfigurasi agar branch kelas {top_class} tetap mendapatkan alokasi leads minimal.
+            4. **Program Stimulus Leads:** Berikan *forced allocation* minimal 5-10 leads/bulan ke branch zero-performance untuk menguji potensi pasar di area tersebut.
+            5. **Evaluasi Branch Class:** Jika setelah 3 bulan berturut-turut tetap zero-leads, pertimbangkan *re-classification* atau merger dengan branch terdekat.
+            """)
+        else:
+            st.success("✅ **Selamat!** Semua branch dalam filter yang dipilih telah menghasilkan leads. Tidak ada zero-performance branch.")
+
+    # ====================================================================
+    # --- 7. VISUALISASI TAMBAHAN (DISTRIBUSI) ---
+    # ====================================================================
+    st.markdown("---")
+    st.header("🗺️ Distribusi Geografis & Komposisi")
+    
     colA, colB = st.columns(2)
     with colA:
         st.subheader("Distribusi Leads per Kelas Cabang")
-        fig1 = px.bar(df_filt, x='BranchClass', color='BranchClass', 
-                      title="Apakah Cabang Kecil (S/XS) Kehujanan Leads?",
-                      color_discrete_sequence=px.colors.qualitative.Set2,
-                      category_orders={'BranchClass': ['XL', 'L', 'M', 'S', 'XS']})
-        st.plotly_chart(fig1, use_container_width=True)
-
+        fig_class = px.bar(df_filt, x='BranchClass', color='BranchClass',
+                          title="Apakah Cabang Kecil (S/XS) Kehujanan Leads?",
+                          category_orders={'BranchClass': ['XL', 'L', 'M', 'S', 'XS']},
+                          color_discrete_sequence=px.colors.qualitative.Set2)
+        st.plotly_chart(fig_class, use_container_width=True)
+    
     with colB:
         st.subheader("Komposisi Jenis Leads")
-        fig2 = px.pie(df_filt, names='Jenis_Leads', hole=0.4,
-                      title="Dominasi Bank Leads vs Cross-Sell/Renewal",
-                      color_discrete_sequence=px.colors.qualitative.Pastel)
-        st.plotly_chart(fig2, use_container_width=True)
+        fig_pie = px.pie(df_filt, names='Jenis_Leads', hole=0.4,
+                        title="Dominasi Bank Leads vs Cross-Sell/Renewal",
+                        color_discrete_sequence=px.colors.qualitative.Pastel)
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-    st.subheader("Tren Harian Penciptaan Leads")
-    daily = df_filt.groupby(df_filt['Creation_Date'].dt.date).size().reset_index(name='Total')
-    fig3 = px.line(daily, x='Creation_Date', y='Total', markers=True, title="Kapan Leads Paling Banyak Masuk?", line_shape='spline')
-    st.plotly_chart(fig3, use_container_width=True)
-
-    # --- LEADERBOARD SELLER (Dengan Analisis Temporal / Rentang Tanggal) ---
-    st.subheader("🏆 Top 15 Seller: Beban Kerja & Kecepatan Distribusi Leads")
+    # ====================================================================
+    # --- 8. DYNAMIC BUSINESS INSIGHTS ---
+    # ====================================================================
+    st.markdown("---")
+    st.header("💡 Dynamic Business Insights (Context-Aware)")
     
-    # Agregasi: Hitung total, cari tanggal pertama dan terakhir dapat lead
-    top_sell = df_filt.groupby(['Seller_Name', 'JobTitle', 'Branch_Name']).agg(
-        Total_Leads=('Leads_ID', 'count'),
-        Lead_Pertama=('Creation_Date', 'min'),
-        Lead_Terakhir=('Creation_Date', 'max')
-    ).reset_index()
-    
-    # Format Tanggal (DD-MMM-YYYY) agar rapi dan mudah dibaca user bisnis
-    top_sell['Lead_Pertama'] = pd.to_datetime(top_sell['Lead_Pertama']).dt.strftime('%d-%b-%Y')
-    top_sell['Lead_Terakhir'] = pd.to_datetime(top_sell['Lead_Terakhir']).dt.strftime('%d-%b-%Y')
-    
-    # Urutkan dari yang terbanyak dan ambil Top 15
-    top_sell = top_sell.sort_values(by='Total_Leads', ascending=False).head(15)
-    
-    # Rename kolom agar bahasa Indonesia dan profesional saat presentasi
-    top_sell = top_sell.rename(columns={
-        'Seller_Name': 'Nama Seller',
-        'JobTitle': 'Jabatan',
-        'Branch_Name': 'Cabang',
-        'Total_Leads': 'Total Leads',
-        'Lead_Pertama': 'Tgl Lead Pertama',
-        'Lead_Terakhir': 'Tgl Lead Terakhir'
-    })
-    
-    st.dataframe(top_sell, use_container_width=True, hide_index=True)
-
-    # --- 5. DYNAMIC BUSINESS INSIGHTS (THE KILLER FEATURE) ---
-    
-    # Logic Insight 1: Top 2 Seller
-    seller_wl = df_filt.groupby('Seller_Name').size().reset_index(name='Total')
-    seller_wl = seller_wl.sort_values('Total', ascending=False)
-    top_sellers = seller_wl['Seller_Name'].head(2).tolist()
-    
-    if len(top_sellers) >= 2:
-        dynamic_sellers = f"*{top_sellers[0].title()}* dan *{top_sellers[1].title()}*"
-    elif len(top_sellers) == 1:
-        dynamic_sellers = f"*{top_sellers[0].title()}*"
-    else:
-        dynamic_sellers = "*beberapa seller*"
-
-    # Logic Insight 2: Rasio Beban Kerja per Branch Class (Auto-Routing)
-    class_metrics = df_filt.groupby('BranchClass').agg(
-        Total=('Leads_ID', 'count'),
-        Sellers=('Seller_Name', 'nunique')
-    ).reset_index()
-    
-    class_metrics['Sellers'] = class_metrics['Sellers'].replace(0, 1)
-    class_metrics['Ratio'] = class_metrics['Total'] / class_metrics['Sellers']
-    
-    if not class_metrics.empty:
-        overloaded_class = class_metrics.loc[class_metrics['Ratio'].idxmax(), 'BranchClass']
-        overloaded_ratio = class_metrics['Ratio'].max()
-        underloaded_class = class_metrics.loc[class_metrics['Ratio'].idxmin(), 'BranchClass']
-    else:
-        overloaded_class, underloaded_class, overloaded_ratio = "Tertentu", "Lainnya", 0
-
-    # Logic Insight 3: Lead-to-Role Alignment (RFRM vs MFRM)
     if total_leads > 0:
-        top_lead = df_filt['Jenis_Leads'].value_counts().index[0]
-        top_lead_pct = (df_filt['Jenis_Leads'].value_counts().iloc[0] / total_leads) * 100
-        top_job = df_filt['JobTitle'].value_counts().index[0]
-        top_area = df_filt['Area_Name'].value_counts().index[0]
+        # Insight 1: Top Performer
+        top_performer = df_filt.groupby('Seller_Name').size().idxmax()
+        top_performer_count = df_filt.groupby('Seller_Name').size().max()
         
-        # Context-Aware Advice berdasarkan Jabatan
-        if top_job == 'MFRM':
-            role_advice = f"Karena didominasi oleh **MFRM (Mega First / Priority)**, pastikan *{top_lead}* yang masuk adalah nasabah *High-Net-Worth*. Jika ini adalah *Bank Leads* reguler, terjadi inefisiensi kapasitas. Sistem harus mem-bypass MFRM dan melemparnya ke antrian RFRM."
-        else:
-            role_advice = f"Karena didominasi oleh **RFRM (Retail)**, optimalkan *script cross-selling* produk mass-market agar konversi *{top_lead}* meningkat sebelum menjadi *cold lead*."
+        # Insight 2: Branch dengan rasio tertinggi
+        branch_ratio = df_filt.groupby('Branch_Name').agg(
+            Leads=('Leads_ID', 'count'),
+            Sellers=('Seller_Name', 'nunique')
+        ).reset_index()
+        branch_ratio['Ratio'] = branch_ratio['Leads'] / branch_ratio['Sellers'].replace(0, 1)
+        top_ratio_branch = branch_ratio.loc[branch_ratio['Ratio'].idxmax()]
+        
+        # Insight 3: Jenis leads dominan
+        top_lead_type = df_filt['Jenis_Leads'].value_counts().index[0]
+        top_lead_pct = (df_filt['Jenis_Leads'].value_counts().iloc[0] / total_leads) * 100
+        
+        st.success(f"""
+        **🎯 Key Takeaways (Periode {start_date} s/d {end_date}):**
+        
+        1. **Top Performer:** Seller **{top_performer}** memimpin dengan **{top_performer_count} leads**. Analisis script/approach-nya untuk direplikasi ke seller lain.
+        
+        2. **Workload Imbalance:** Branch **{top_ratio_branch['Branch_Name']}** memiliki rasio tertinggi ({top_ratio_branch['Ratio']:.1f} leads/seller). Pertimbangkan redistribusi leads ke branch dengan rasio lebih rendah.
+        
+        3. **Lead Type Dominance:** **{top_lead_type}** mendominasi sebesar **{top_lead_pct:.1f}%**. 
+        👉 *Rekomendasi:* Pastikan produk yang ditawarkan sesuai dengan profil nasabah dari jenis leads ini untuk memaksimalkan *conversion rate*.
+        
+        4. **Zero-Performance Alert:** {f'Terdapat {len(zero_leads_branches)} branch yang perlu perhatian khusus (lihat tab "Branch Tanpa Leads").' if not zero_leads_branches.empty else 'Semua branch aktif menghasilkan leads. Pertahankan momentum ini!'}
+        """)
     else:
-        top_lead, top_lead_pct, top_area, top_job, role_advice = "Data Kosong", 0, "Area Tertentu", "Seller", "Tidak ada data."
-
-    # Tampilkan Insight Dinamis ke Layar
-    st.success(f"""
-    💡 **Actionable Business Insights & Rekomendasi Automasi (Real-Time Context-Aware):**
-    
-    1. **Workload Imbalance (SDM):** Terdeteksi seller seperti {dynamic_sellers} menampung volume leads yang sangat tinggi (anomali) dibandingkan rekan-rekannya di area yang sama berdasarkan filter yang Anda pilih.
-    
-    2. **Rekomendasi Auto-Routing (Spill-Over System):** Berdasarkan rasio beban kerja saat ini, **Cabang Kelas {overloaded_class}** mengalami *overload* (rata-rata **{overloaded_ratio:.1f} leads/seller**). 
-    👉 *Sistem Automasi:* Disarankan membuat *rule-based routing* di mana jika *queue* di Kelas {overloaded_class} penuh, sistem otomatis melempar (*spill-over*) leads ke **Cabang Kelas {underloaded_class}** yang saat ini rasio bebannya lebih rendah dalam regional yang sama.
-    
-    3. **Lead-to-Role Alignment & Trigger API:** Pada filter saat ini, **{top_lead}** mendominasi sebesar **{top_lead_pct:.1f}%** dan paling banyak dipegang oleh jabatan **{top_job}** di **{top_area}**. 
-    👉 *Analisis Strategis:* {role_advice}
-    👉 *Sistem Automasi:* Buat *Trigger API* (Email/WA Blast otomatis) yang mengirimkan *daily reminder* berisi daftar prospek prioritas ke para {top_job} di {top_area} guna mempercepat *closing rate*.
-    """)
+        st.warning("⚠️ Tidak ada data leads pada filter & periode yang dipilih.")
 
 else:
     st.warning("⚠️ Data tidak ditemukan atau file belum dimuat dengan benar. Pastikan file bernama 'data.xlsx'.")
